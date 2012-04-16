@@ -1,0 +1,557 @@
+diff --git a/conf.mk b/conf.mk
+index face29e..4a4fc88 100644
+--- a/conf.mk
++++ b/conf.mk
+@@ -1,4 +1,4 @@
+ HW = hw2
+ # Put your UNI here
+-UNI = XXX
++UNI = AML2194
+ 
+diff --git a/defs.h b/defs.h
+index 921c7bf..cca6da3 100644
+--- a/defs.h
++++ b/defs.h
+@@ -7,6 +7,7 @@ struct proc;
+ struct spinlock;
+ struct stat;
+ struct superblock;
++struct record;
+ 
+ // bio.c
+ void            binit(void);
+@@ -112,6 +113,7 @@ void            pinit(void);
+ void            procdump(void);
+ void            scheduler(void) __attribute__((noreturn));
+ void            sched(void);
++int             fetchrecords(struct record*, int);
+ void            sleep(void*, struct spinlock*);
+ void            userinit(void);
+ int             wait(void);
+diff --git a/proc.c b/proc.c
+index 05cb85f..af4ad07 100644
+--- a/proc.c
++++ b/proc.c
+@@ -6,7 +6,7 @@
+ #include "x86.h"
+ #include "proc.h"
+ #include "spinlock.h"
+-
++#include "record.h"
+ struct {
+   struct spinlock lock;
+   struct proc proc[NPROC];
+@@ -36,7 +36,7 @@ allocproc(void)
+ {
+   struct proc *p;
+   char *sp;
+-
++ 
+   acquire(&ptable.lock);
+   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+     if(p->state == UNUSED)
+@@ -69,7 +69,7 @@ found:
+   p->context = (struct context*)sp;
+   memset(p->context, 0, sizeof *p->context);
+   p->context->eip = (uint)forkret;
+-
++   
+   return p;
+ }
+ 
+@@ -83,6 +83,11 @@ userinit(void)
+   
+   p = allocproc();
+   initproc = p;
++  p->head = 0;
++  p->tail = 0;
++  p->marker = 0;
++  p->total = 0;
++  
+   if((p->pgdir = setupkvm(kalloc)) == 0)
+     panic("userinit: out of memory?");
+   inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
+@@ -96,6 +101,7 @@ userinit(void)
+   p->tf->esp = PGSIZE;
+   p->tf->eip = 0;  // beginning of initcode.S
+ 
++
+   safestrcpy(p->name, "initcode", sizeof(p->name));
+   p->cwd = namei("/");
+ 
+@@ -138,11 +144,14 @@ fork(void)
+   // Copy process state from p.
+   if((np->pgdir = copyuvm(proc->pgdir, proc->sz)) == 0){
+     kfree(np->kstack);
++    np->mode = proc->mode;
+     np->kstack = 0;
+     np->state = UNUSED;
++    np->mode = proc->mode;
+     return -1;
+   }
+   np->sz = proc->sz;
++   np->mode = proc->mode;
+   np->parent = proc;
+   *np->tf = *proc->tf;
+ 
+@@ -187,7 +196,7 @@ exit(void)
+ 
+   // Parent might be sleeping in wait().
+   wakeup1(proc->parent);
+-
++  
+   // Pass abandoned children to init.
+   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+     if(p->parent == proc){
+@@ -199,6 +208,7 @@ exit(void)
+ 
+   // Jump into the scheduler, never to return.
+   proc->state = ZOMBIE;
++  proc->total = 0;
+   sched();
+   panic("zombie exit");
+ }
+@@ -275,6 +285,7 @@ scheduler(void)
+       proc = p;
+       switchuvm(p);
+       p->state = RUNNING;
++      p->mode = proc->mode;
+       swtch(&cpu->scheduler, proc->context);
+       switchkvm();
+ 
+@@ -456,4 +467,31 @@ procdump(void)
+   }
+ }
+ 
+-
++int
++fetchrecords(struct record *records, int numrecords)
++{
++		int i = 0;
++		struct record *r = proc->head;
++   		while(r->next != 0 && proc->head && proc->head != 0){
++			i++;
++			r = r->next;
++   		}
++		if(i>0)
++			i++;
++
++	if(records){
++  	 struct record *copy = proc->head;
++  ///	 while(copy){	
++
++		memmove(&records, &copy, sizeof(struct record));
++
++	//	if(copy->next == 0)
++	//		break;
++		copy = copy->next;
++
++  // 	}	
++	}
++
++cprintf("%d\n", i);
++return i;
++}
+diff --git a/proc.h b/proc.h
+index 385a92f..55c6eca 100644
+--- a/proc.h
++++ b/proc.h
+@@ -1,6 +1,8 @@
++
+ // Segments in proc->gdt.
+ #define NSEGS     7
+ 
++
+ // Per-CPU state
+ struct cpu {
+   uchar id;                    // Local APIC ID; index into cpus[] below
+@@ -66,6 +68,11 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++  int mode;
++  int marker;
++  int total;
++  struct record* head;
++  struct record* tail;
+ };
+ 
+ // Process memory is laid out contiguously, low addresses first:
+@@ -73,3 +80,6 @@ struct proc {
+ //   original data and bss
+ //   fixed-size stack
+ //   expandable heap
++
++
++
+diff --git a/record.c b/record.c
+index 6fbb3dc..b982ffb 100644
+--- a/record.c
++++ b/record.c
+@@ -1,8 +1,8 @@
+ // Added for HW2
+ 
+-#include "record.h"
++// #include "record.h"
+ 
+-int
++/** int
+ startrecording()
+ {
+   return 0;
+@@ -19,3 +19,4 @@ fetchrecords(struct record *records, int numrecords)
+ {
+   return 0;
+ }
++**/
+diff --git a/record.h b/record.h
+index 3c3c7e2..e690942 100644
+--- a/record.h
++++ b/record.h
+@@ -4,11 +4,14 @@ enum recordtype { SYSCALL_NO, ARG_INTEGER, ARG_POINTER, ARG_STRING, RET_VALUE };
+ #define MAX_STR_LEN (20)
+ 
+ struct record {
++  struct record *next;
++  struct record *previous;
+   enum recordtype type;
+   union recordvalue {
+     int intval;
+     void *ptrval;
+     char strval[MAX_STR_LEN];
+   } value;
++  
+ };
+ 
+diff --git a/syscall.c b/syscall.c
+index 0918da7..b0507e1 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -6,6 +6,38 @@
+ #include "proc.h"
+ #include "x86.h"
+ #include "syscall.h"
++#include "record.h"
++
++
++typedef struct {
++   char *name;
++   char *argtypes[10];
++} structure;
++
++
++structure structurelist[] = {
++[SYS_fork]    {"SYS_fork", {}},
++[SYS_exit]    {"SYS_exit", {"INTEGER"}},
++[SYS_wait]    {"SYS_wait",{}},
++[SYS_pipe]    {"SYS_pipe", {"POINTER"}},
++[SYS_read]    {"SYS_read",{"INTEGER", "POINTER", "INTEGER"}},
++[SYS_kill] {"SYS_kill",  {"INTEGER"}},
++[SYS_exec] {"SYS_exec",{"STRING", "POINTER"}},
++[SYS_fstat] {"SYS_fstat", {"INTEGER", "POINTER"}},
++[SYS_chdir] {"SYS_chdir",{"STRING"}},
++[SYS_dup] {"SYS_dup",  {"INTEGER"}},
++[SYS_getpid] {"SYS_getpid",  {}},
++[SYS_sbrk] {"SYS_sbrk",  {"INTEGER"}},
++[SYS_sleep] {"SYS_sleep",  {"INTEGER"}},
++[SYS_uptime] {"SYS_uptime", {}},
++[SYS_open] {"SYS_open", {"STRING", "INTEGER"}},
++[SYS_write] {"SYS_write",  {"INTEGER", "POINTER", "INTEGER"}},
++[SYS_mknod] {"SYS_mknod", {"STRING", "INTEGER", "INTEGER"}},
++[SYS_unlink] {"SYS_unlink",  {"STRING"}},
++[SYS_link] {"SYS_link", {"STRING", "STRING"}},
++[SYS_mkdir] {"SYS_mkdir",  {"STRING"}},
++[SYS_close] {"SYS_close", {"INTEGER"}}
++};
+ 
+ // User code makes a system call with INT T_SYSCALL.
+ // System call number in %eax.
+@@ -98,6 +130,9 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_startrecording(void);
++extern int sys_stoprecording(void);
++extern int sys_fetchrecords(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -121,21 +156,152 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_startrecording]   sys_startrecording,
++[SYS_stoprecording]   sys_stoprecording,
++[SYS_fetchrecords]   sys_fetchrecords
+ };
+ 
++
++
+ void
+ syscall(void)
+ {
+   int num;
+-
+-  num = proc->tf->eax;
++  num = proc->tf->eax;	
+   if(num >= 0 && num < SYS_open && syscalls[num]) {
+-    proc->tf->eax = syscalls[num]();
++	if(num != 22 && num != 23 && num != 24 && proc->mode == 1){
++		goto system;} 
++       proc->tf->eax = syscalls[num]();
++	return;
+   } else if (num >= SYS_open && num < NELEM(syscalls) && syscalls[num]) {
+-    proc->tf->eax = syscalls[num]();
++	if(num != 22 && num != 23 && num != 24 && proc->mode == 1){
++		goto system;}
++   
++      proc->tf->eax = syscalls[num]();
++	return;
+   } else {
+     cprintf("%d %s: unknown sys call %d\n",
+             proc->pid, proc->name, num);
+     proc->tf->eax = -1;
++    return;
+   }
++
++system:
++	{
++	struct record *r;
++	num = proc->tf->eax;
++        r = (struct record*) kalloc();
++
++	if(r == 0){
++		cprintf("Couldn't allocate memory for process system %d\n",
++            		proc->pid);
++		proc->tf->eax = syscalls[num]();
++		}
++	
++	r->type = SYSCALL_NO;
++	r->value.intval = num;
++	
++ 
++	if(proc->head == 0){
++		proc->head = r;
++		r->next = 0;
++		r->previous = 0;
++	//	proc->tail = r;
++		}
++        else{ 
++		struct record *current = proc->head;
++                while(current->next !=0)	
++			current = current->next;
++        	current->next = r;
++		r->next = 0;
++  		};
++
++	goto args;		
++
+ }
++
++args:
++	{
++	int i;
++	i = 0;
++	num = proc->tf->eax;
++        while(structurelist[num].argtypes[i]){
++	struct record *r;
++        r = (struct record*) kalloc();
++	if(r == 0){
++		cprintf("Couldn't allocate memory for process args %d\n",
++            		proc->pid);
++		proc->tf->eax = syscalls[num]();
++		}
++
++	if(strncmp(structurelist[num].argtypes[i], "INTEGER", 5) == 0){
++	r->type = ARG_INTEGER;
++  	int n;
++  	 if(argint(i, &n) < 0)
++   		 return;
++	r->value.intval = n;
++	}
++
++	if(strncmp(structurelist[num].argtypes[i], "STRING", 5) == 0){
++
++	r->type = ARG_STRING;
++	  char*  name;
++	int a;
++  	if((a = argstr(0, &name)) < 0)
++		return;
++	strncpy(r->value.strval, name, 20);
++        if(a > 20)
++           (r->value.strval)[19] = 0;
++        else
++            (r->value.strval)[a] = 0;
++	}
++
++	if(strncmp(structurelist[num].argtypes[i], "POINTER", 5) == 0){
++
++	r->type = ARG_POINTER;
++        int *ptr = (int*) num;
++	r->value.ptrval = ptr;
++	}
++	struct record *current = proc->head;
++        while(current->next !=0)	
++		current = current->next;
++        current->next = r;
++	r->next = 0;
++	i++;
++}
++	
++				
++	goto retValue;
++
++}
++
++retValue:
++	{
++	struct record *r;
++	r = (struct record*) kalloc();	
++	if(r == 0){
++		cprintf("Couldn't allocate memory for process ret value %d\n",
++            		proc->pid);
++		proc->tf->eax = syscalls[num]();
++		}
++	
++	r->type = RET_VALUE;
++//	r->value.intval = proc->pid;
++	r->value.intval = syscalls[num]();
++	struct record *current = proc->head;
++     while(current->next !=0)	
++		current = current->next;
++        current->next = r;
++	r->next = 0;	
++	proc->tf->eax = r->value.intval;
++}
++
++}
++
++
++
++
++
++
++
++
+diff --git a/syscall.h b/syscall.h
+index e577e75..9e1f732 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -1,3 +1,4 @@
++
+ // System call numbers
+ #define SYS_fork    1
+ #define SYS_exit    2
+@@ -26,3 +27,11 @@
+ #define SYS_startrecording 22
+ #define SYS_stoprecording  23
+ #define SYS_fetchrecords   24
++
++
++
++#define INTEGER 0
++#define POINTER 1
++#define STRING 2
++
++
+diff --git a/sysfile.c b/sysfile.c
+index 9de3d86..06623ee 100644
+--- a/sysfile.c
++++ b/sysfile.c
+@@ -7,6 +7,7 @@
+ #include "fs.h"
+ #include "file.h"
+ #include "fcntl.h"
++#include "record.h"
+ 
+ // Fetch the nth word-sized system call argument as a file descriptor
+ // and return both the descriptor and the corresponding struct file.
+@@ -417,3 +418,76 @@ sys_pipe(void)
+   fd[1] = fd1;
+   return 0;
+ }
++
++
++int
++sys_startrecording(void)
++{
++
++   if(proc->mode == 1){
++	return -1;}
++  else{
++  	proc->mode = 1;
++  	return 0;}
++}
++
++int
++sys_stoprecording(void)
++{
++  if(proc->mode == 0)
++	return -1;
++  else{
++  	proc->mode = 0;
++  	return 0;}
++
++}
++
++ int
++sys_fetchrecords(struct record *records, int numrecords)
++{ 
++  
++   struct record *rec;
++   if (argptr(0, (void*)&rec, sizeof(*rec)) < 0)
++        return -1;
++ 
++   int n;
++   if(argint(1, &n) < 0)
++    return -1;
++  
++   if(!proc->head)
++    return 0;
++   
++
++
++   struct record *copy = proc->head;
++
++   while(proc->head !=0 && n != 0){   
++    memmove(rec, copy, sizeof(struct record));
++	
++	if(copy->next == 0)
++		break;
++    copy = copy->next;
++      
++        int add;
++        add = (int) rec;
++        add = add + sizeof(struct record);
++        rec = (struct record*) add;
++	n--;
++   }   
++   
++		int i = 0;
++		struct record *r = proc->head;
++		if(proc->head != 0)
++			i++;
++   		while(r->next != 0){
++			i++;
++			r = r->next;
++   		}
++		
++
++
++return i;
++
++
++}
++
+diff --git a/sysproc.c b/sysproc.c
+index c66339e..f8e2c28 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -38,6 +38,7 @@ sys_kill(void)
+ int
+ sys_getpid(void)
+ {
++  proc->total = proc->total + 1;
+   return proc->pid;
+ }
+ 
