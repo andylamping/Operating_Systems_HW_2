@@ -1,0 +1,19 @@
+W4118 OPERATING SYSTEMS I
+Lab 2
+aml2194
+==========
+
+
+When a user process issues a system call to request OS service or a device generates an interrupt, the hardware must switch from user-mode to kernel mode so that the kernel can handle this system call or interrupt. On the x86, this switch is done by a hardware mechanism called "interrupt" or "trap". An interrupt pauses the execution of the current user process, saves its context, switches from the user mode to the kernel mode, and executes a piece of code in the kernel called an interrupt handler. 
+
+This patch modifies the xv6 kernel to record system calls as process issues. For each system call the following is recorded: the system call number, the return value, and the arguments if any. 
+In order to control the recording and retrieve the results, the following three system calls were implemented:
+
+    int startrecording()
+    int stoprecording()
+    int fetchrecords(struct record *records, int num_records)
+
+A process is either in the recording mode or the normal mode. Initially, a process is in the normal mode. startrecording puts the calling process into the recording mode, and stoprecording switches it back to normal. These two system calls should return 0 on success, or return -1 if the current process is already in the targeting mode. When a process forks, the child process inherits the mode of the parent. 
+
+All the system calls issued by a process, except the above three system calls, are recorded when this process is in the recording mode. You should store the records in a process's PCB, e.g. a linked list associated with struct proc. These records should be removed when the process exits. When a process forks, the child process starts without any record.
+fetchrecords retrieves all the system call records of the current process. 
